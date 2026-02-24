@@ -13,6 +13,7 @@ HIGH_OUTGOING = 100000
 HIGH_TX_COUNT = 100
 HIGH_HOURLY_TX = 20
 RISK_SCORE_INCREMENT = 10
+HIGH_NA_BALANCE = 70000
 
 def high_daily_volume(conn):
     logger.info('Searching for high daily volume')
@@ -86,6 +87,8 @@ def high_daily_hour_volume(conn):
             try:
                 cursor.execute(update_query,[RISK_SCORE_INCREMENT, acc_id])
                 conn.commit()
+                logger.info(f"high_daily_hour_volume: successfully updated risk_score for acc_id={acc_id}!")
+
             except Exception as e:
                 conn.rollback()
                 logger.error("high_daily_hour_volume: rollback for acc_id=%d — %s", acc_id, e)
@@ -94,10 +97,85 @@ def high_daily_hour_volume(conn):
         logger.info("high_daily_hour_volume: completed analysis!")
 
 
+def new_account_high_balance(conn):
+    logger.info('new_account_high_balance: starting analysing')
+    query = ''' SELECT USER_ID, BALANCE, ACCOUNT_ID  FROM accounts WHERE CREATED_AT >= TRUNC(sysdate) - 7'''
+    df = pd.read_sql(query, conn)
+    if df.empty:
+        logger.info("new_account_high_balance: no data found!")
+        return 0
+    anomalies = df[df['BALANCE'] >= HIGH_NA_BALANCE]
+    if anomalies.empty:
+        logger.info("new_account_high_balance: no anomalies found!")
+        return 0
+    logger.info(f"new_account_high_balance: {len(anomalies)} anomalies found!")
+
+    cursor = conn.cursor()
+    update_query = """ UPDATE users SET RISK_SCORE = RISK_SCORE + :1, UPDATED_AT = sysdate WHERE USER_ID = (SELECT USER_ID FROM accounts WHERE ACCOUNT_ID = :2)"""
+    try:
+        for _, row in anomalies.iterrows():
+            acc_id = int(row['ACCOUNT_ID'])
+            try:
+                cursor.execute(update_query,[RISK_SCORE_INCREMENT, acc_id])
+                conn.commit()
+                logger.info(f"new_account_high_balance: successfully updated risk_score for acc_id={acc_id}!")
+
+            except Exception as e:
+                conn.rollback()
+                logger.error("new_account_high_balance: rollback for acc_id=%d — %s", acc_id, e)
+    finally:
+        cursor.close()
+        logger.info("new_account_high_balance: completed analysis!")
+
+
+def account_outlier(conn):
+    logger.info('account_outlier: starting analysing')
+    query = "SELECT FROM_ACCOUNT_ID, TO_ACCOUNT_ID, PROCESSED_AT, AMOUNT from payment_transaction WHERE processed_at >= SYSDATE - 30"
+    df = pd.read_sql(query, conn)
+    if df.empty:
+        logger.info("account_outlier: no data found!")
+        return 0
+
+    senders = df[["FROM_ACCOUNT_ID","PROCESSED_AT","AMOUNT"]].rename(columns={'FROM_ACCOUNT_ID':'ACCOUNT_ID'})
+    receivers = df[["TO_ACCOUNT_ID","PROCESSED_AT","AMOUNT"]].rename(columns={'TO_ACCOUNT_ID':'ACCOUNT_ID'})
+
+    all_transactions = pd.concat([senders, receivers])
+
+    all_transactions['mean'] = (all_transactions.groupby('ACCOUNT_ID')['AMOUNT'].transform('mean'))
+
+    all_transactions['std'] = (all_transactions.groupby('ACCOUNT_ID')['AMOUNT'].transform('std'))
+
+    anomalies = all_transactions[(all_transactions['std'] > 0) & (all_transactions['AMOUNT'] > all_transactions['mean'] + 3 * all_transactions['std'])]
+
+    if anomalies.empty:
+        logger.info("account_outlier: no anomalies found!")
+        return 0
+    logger.info(f"account_outlier: {len(anomalies)} anomalies found!")
+
+    cursor = conn.cursor()
+    update_query = """ UPDATE users SET RISK_SCORE = RISK_SCORE + :1, UPDATED_AT = sysdate WHERE USER_ID = (SELECT USER_ID FROM accounts WHERE ACCOUNT_ID = :2)"""
+
+    try:
+        for _, row in anomalies.iterrows():
+            acc_id = int(row['ACCOUNT_ID'])
+            try:
+                cursor.execute(update_query,[RISK_SCORE_INCREMENT, acc_id])
+                conn.commit()
+                logger.info(f"account_outlier:successfully updated risk_score for acc_id={acc_id}!")
+            except Exception as e:
+                conn.rollback()
+                logger.error("account_outlier: rollback for acc_id=%d — %s", acc_id, e)
+    finally:
+        cursor.close()
+        logger.info("account_outlier: completed analysis!")
+
+
 def anomaly():
     conn = get_connection()
     high_daily_volume(conn)
     high_daily_hour_volume(conn)
+    new_account_high_balance(conn)
+    account_outlier(conn)
     conn.close()
 
 
