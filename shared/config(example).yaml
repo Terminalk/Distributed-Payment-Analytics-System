@@ -1,0 +1,4 @@
+oracle:
+  username: user
+  password: pass
+  dsn: localhost:1111/ABC
