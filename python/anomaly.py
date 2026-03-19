@@ -1,11 +1,16 @@
 import logging
-
+import os
 import pandas as pd
 from db_connector import get_connection
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
+
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 logs_format = "%(asctime)s [%(levelname)s] %(message)s"
-file = 'logs/anomaly_detector_logs.log'
-logging.basicConfig(level=logging.INFO, format=logs_format, filename=file, filemode='a')
+log_file = os.path.join(LOGS_DIR, 'anomaly_detector_logs.log')
+logging.basicConfig(level=logging.INFO, format=logs_format, filename=log_file, filemode='a')
 logger = logging.getLogger(__name__)
 
 HIGH_INCOMING = 100000
