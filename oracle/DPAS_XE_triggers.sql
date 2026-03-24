@@ -7,7 +7,7 @@ END trg_account_updated_at;
 /
 
 
-CREATE OR REPLACE TRIGGER trg_user_updated_at 
+CREATE OR REPLACE TRIGGER trg_user_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 BEGIN
@@ -34,13 +34,21 @@ END trg_block_blocked_user;
 
 
 CREATE OR REPLACE TRIGGER trg_audit_transaction_status
-AFTER UPDATE ON payment_transaction
+AFTER UPDATE OF status ON payment_transaction
 FOR EACH ROW
 BEGIN
     IF :OLD.status != :NEW.status THEN
-        INSERT INTO transaction_audit (transaction_id, old_status, new_status, changed_by)
-        VALUES (:NEW.transaction_id, :OLD.status, :NEW.status, 
-                SYS_CONTEXT('USERENV', 'SESSION_USER'));
+        INSERT INTO transaction_audit (
+            transaction_id,
+            old_status,
+            new_status,
+            changed_by
+        ) VALUES (
+            :NEW.transaction_id,
+            :OLD.status,
+            :NEW.status,
+            SYS_CONTEXT('USERENV', 'SESSION_USER')
+        );
     END IF;
 END trg_audit_transaction_status;
 /
