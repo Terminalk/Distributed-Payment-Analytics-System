@@ -21,6 +21,15 @@ RISK_SCORE_INCREMENT = 10
 HIGH_NA_BALANCE = 70000
 FAN_IN_PATTERN_THRESHOLD = 20
 
+def alert_exists(cursor, account_id: int, alert_type: str) -> bool:
+    cursor.execute("""
+        SELECT COUNT(*) FROM aml_alert
+        WHERE account_id  = :1
+          AND alert_type  = :2
+          AND status      = 'OPEN'
+          AND TRUNC(created_at) = TRUNC(SYSDATE)
+    """, [account_id, alert_type])
+    return cursor.fetchone()[0] > 0
 
 def high_daily_volume(conn):
     logger.info('high_daily_volume: starting analysis')
@@ -63,6 +72,9 @@ def high_daily_volume(conn):
                 row["TOTAL_OUTGOING"]    / HIGH_OUTGOING,
                 row["TRANSACTION_COUNT"] / HIGH_TX_COUNT
             )
+            if alert_exists(cursor, acc_id, 'HIGH_VOLUME'):
+                logger.info(f"high_daily_volume: skipping duplicate alert for acc_id={acc_id}")
+                continue
             try:
                 cursor.execute(update_query, [RISK_SCORE_INCREMENT, acc_id])
                 cursor.execute(insert_alert_query, [acc_id, alert_score, HIGH_INCOMING, acc_id])
@@ -115,6 +127,9 @@ def high_daily_hour_volume(conn):
         for _, row in anomalies.iterrows():
             acc_id = int(row['ACCOUNT_ID'])
             alert_score = row['TRANSACTION_COUNT'] / HIGH_HOURLY_TX
+            if alert_exists(cursor, acc_id, 'HIGH_VOLUME'):
+                logger.info(f"high_daily_hour_volume: skipping duplicate alert for acc_id={acc_id}")
+                continue
             try:
                 cursor.execute(update_query, [RISK_SCORE_INCREMENT, acc_id])
                 cursor.execute(insert_alert_query, [acc_id, alert_score, HIGH_HOURLY_TX, acc_id])
@@ -160,6 +175,9 @@ def new_account_high_balance(conn):
             acc_id      = int(row['ACCOUNT_ID'])
             user_id     = int(row['USER_ID'])
             alert_score = row['BALANCE'] / HIGH_NA_BALANCE
+            if alert_exists(cursor, acc_id, 'STRUCTURING'):
+                logger.info(f"new_account_high_balance: skipping duplicate alert for acc_id={acc_id}")
+                continue
             try:
                 cursor.execute(update_query, [RISK_SCORE_INCREMENT, user_id])
                 cursor.execute(insert_alert_query, [user_id, acc_id, alert_score, HIGH_NA_BALANCE])
@@ -220,6 +238,9 @@ def account_outlier(conn):
             acc_id          = int(row['ACCOUNT_ID'])
             z_score         = float(row['z_score'])
             threshold_value = float(row['threshold_value'])
+            if alert_exists(cursor, acc_id, 'OUTLIER'):
+                logger.info(f"account_outlier: skipping duplicate alert for acc_id={acc_id}")
+                continue
             try:
                 cursor.execute(update_query, [RISK_SCORE_INCREMENT, acc_id])
                 cursor.execute(insert_alert_query, [acc_id, z_score, threshold_value, acc_id])
@@ -268,7 +289,7 @@ def fan_in_pattern(conn):
     """
     insert_alert_query = """
         INSERT INTO aml_alert (user_id, account_id, alert_type, alert_score, threshold_value)
-        SELECT user_id, :1, 'HIGH_VOLUME', :2, :3
+        SELECT user_id, :1, 'STRUCTURING', :2, :3
         FROM accounts WHERE account_id = :4
     """
 
@@ -277,6 +298,9 @@ def fan_in_pattern(conn):
         for _, row in anomalies.iterrows():
             acc_id      = int(row["TO_ACCOUNT_ID"])
             alert_score = float(row["unique_senders"]) / FAN_IN_PATTERN_THRESHOLD
+            if alert_exists(cursor, acc_id, 'STRUCTURING'):
+                logger.info(f"fan_in_pattern: skipping duplicate alert for acc_id={acc_id}")
+                continue
             try:
                 cursor.execute(update_query, [RISK_SCORE_INCREMENT, acc_id])
                 cursor.execute(insert_alert_query, [acc_id, alert_score, FAN_IN_PATTERN_THRESHOLD, acc_id])
